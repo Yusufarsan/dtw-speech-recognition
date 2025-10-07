@@ -28,6 +28,14 @@ This system implements a simple speech recognition system using DTW algorithm to
 ### Install Dependencies
 
 ```bash
+python -m venv my_venv
+```
+
+```bash
+my_venv\Scripts\activate or source my_env_name/bin/activate
+```
+
+```bash
 pip install -r requirements.txt
 ```
 
@@ -165,18 +173,6 @@ The system extracts 39-dimensional features:
 - Calculates a threshold based on median template distances
 - Rejects samples with distance > threshold as "unknown"
 - Default threshold: 1.5 × median of intra-class template distances
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is open source and available under the MIT License.
-
-## Author
-
-Yusuf Arsan
 
 ## Acknowledgments
 

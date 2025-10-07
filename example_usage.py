@@ -28,6 +28,9 @@ def example_basic_usage():
     print("\nLoaded templates by vowel:")
     for vowel, templates in recognizer.templates.items():
         print(f"  {vowel}: {len(templates)} templates")
+    
+    # Show supported formats
+    print(f"\nSupported audio formats: {', '.join(recognizer.get_supported_formats())}")
 
 def example_single_classification():
     """Example of classifying a single file"""
@@ -42,20 +45,36 @@ def example_single_classification():
         print("Error: No templates found.")
         return
     
-    # Classify a single test file
-    test_file = 'data/a/uji_p1.wav'
-    try:
-        print(f"\nClassifying: {test_file}")
-        test_features = recognizer.extract_mfcc_features(test_file)
-        predicted, distance, all_distances = recognizer.classify(test_features)
-        
-        print(f"Predicted vowel: {predicted}")
-        print(f"Distance: {distance:.2f}")
-        print("\nDistances to all vowels:")
-        for vowel, dist in sorted(all_distances.items(), key=lambda x: x[1]):
-            print(f"  {vowel}: {dist:.2f}")
-    except Exception as e:
-        print(f"Error: {e}")
+    # Classify a single test file (try different formats)
+    test_files = [
+        'data/a/uji_p1.wav',
+        'data/a/uji_p1.mp3',  # If available
+        'data/a/uji_p1.flac'  # If available
+    ]
+    
+    for test_file in test_files:
+        try:
+            print(f"\nTrying to classify: {test_file}")
+            
+            # Check if file exists
+            import os
+            if not os.path.exists(test_file):
+                print(f"  File not found: {test_file}")
+                continue
+                
+            test_features = recognizer.extract_mfcc_features(test_file)
+            predicted, distance, all_distances = recognizer.classify(test_features)
+            
+            print(f"  Predicted vowel: {predicted}")
+            print(f"  Distance: {distance:.2f}")
+            print("  Distances to all vowels:")
+            for vowel, dist in sorted(all_distances.items(), key=lambda x: x[1]):
+                print(f"    {vowel}: {dist:.2f}")
+            break  # Exit after first successful classification
+        except Exception as e:
+            print(f"  Error: {e}")
+    else:
+        print("No test files could be processed")
 
 def example_custom_evaluation():
     """Example of custom evaluation with specific parameters"""

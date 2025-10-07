@@ -8,6 +8,8 @@ import os
 import glob
 import numpy as np
 from scipy.io import wavfile
+import librosa
+import soundfile as sf
 from python_speech_features import mfcc, delta
 from dtw import dtw
 
@@ -27,19 +29,86 @@ class DTWRecognizer:
         self.data_dir = data_dir
         self.vowels = ['a', 'i', 'u', 'e', 'o']
         self.templates = {}
+        self.supported_formats = ['.wav', '.mp3', '.flac', '.m4a', '.ogg']
+    
+    def get_supported_formats(self):
+        """
+        Get list of supported audio formats
+        
+        Returns:
+            List of supported file extensions
+        """
+        return self.supported_formats
+    
+    def find_audio_files(self, directory, pattern_prefix):
+        """
+        Find audio files with given pattern prefix in multiple formats
+        
+        Args:
+            directory: Directory to search in
+            pattern_prefix: Pattern prefix (e.g., 'template_p', 'uji_p')
+            
+        Returns:
+            List of found audio files
+        """
+        audio_files = []
+        for ext in self.supported_formats:
+            pattern = os.path.join(directory, f'{pattern_prefix}*{ext}')
+            files = glob.glob(pattern)
+            audio_files.extend(files)
+        return sorted(audio_files)
+    
+    def validate_audio_file(self, audio_file):
+        """
+        Validate if audio file can be processed
+        
+        Args:
+            audio_file: Path to audio file
+            
+        Returns:
+            True if file is valid, False otherwise
+        """
+        try:
+            # Try to load a small portion to validate
+            _, sr = librosa.load(audio_file, sr=None, duration=0.1)
+            return True
+        except Exception:
+            return False
         
     def extract_mfcc_features(self, audio_file):
         """
-        Extract 39D MFCC features (13 MFCC + Δ + ΔΔ)
+        Extract 39D MFCC features (13 MFCC + Δ + ΔΔ) from audio file
+        Supports multiple audio formats: WAV, MP3, FLAC, M4A, OGG
         
         Args:
-            audio_file: Path to WAV audio file
+            audio_file: Path to audio file (various formats supported)
             
         Returns:
             39D MFCC features array
         """
-        # Read audio file
-        sample_rate, signal = wavfile.read(audio_file)
+        try:
+            # Use librosa for universal audio loading
+            # Auto-resample to 16kHz for consistency
+            signal, sample_rate = librosa.load(audio_file, sr=16000, mono=True)
+            
+            # Convert to int16 for compatibility with python-speech-features
+            signal = (signal * 32767).astype(np.int16)
+            
+        except Exception as e:
+            # Fallback to scipy.io.wavfile for .wav files
+            try:
+                if audio_file.lower().endswith('.wav'):
+                    sample_rate, signal = wavfile.read(audio_file)
+                    # Convert to mono if stereo
+                    if len(signal.shape) > 1:
+                        signal = np.mean(signal, axis=1)
+                    # Ensure int16 format
+                    if signal.dtype != np.int16:
+                        signal = (signal / np.max(np.abs(signal)) * 32767).astype(np.int16)
+                else:
+                    raise Exception(f"Unsupported format: {audio_file}")
+            except Exception as e2:
+                raise Exception(f"Failed to load audio file {audio_file}: {e2}")
         
         # Extract 13 MFCCs
         mfcc_features = mfcc(signal, sample_rate, numcep=13, nfilt=26, 
@@ -58,20 +127,28 @@ class DTWRecognizer:
     
     def load_templates(self):
         """
-        Load template files (template_p1.wav to template_p5.wav) for each vowel
+        Load template files (template_p1.* to template_p5.*) for each vowel
+        Supports multiple audio formats: WAV, MP3, FLAC, M4A, OGG
         """
         print("Loading templates...")
+        print(f"Supported formats: {', '.join(self.supported_formats)}")
+        
         for vowel in self.vowels:
             vowel_dir = os.path.join(self.data_dir, vowel)
-            template_files = sorted(glob.glob(os.path.join(vowel_dir, 'template_p*.wav')))
+            template_files = self.find_audio_files(vowel_dir, 'template_p')
             
             if not template_files:
-                print(f"Warning: No template files found for vowel '{vowel}'")
+                print(f"Warning: No template files found for vowel '{vowel}' in {vowel_dir}")
                 continue
             
             self.templates[vowel] = []
             for template_file in template_files:
                 try:
+                    # Validate file before processing
+                    if not self.validate_audio_file(template_file):
+                        print(f"  Warning: Invalid audio file {os.path.basename(template_file)}")
+                        continue
+                        
                     features = self.extract_mfcc_features(template_file)
                     self.templates[vowel].append({
                         'file': os.path.basename(template_file),
@@ -82,6 +159,18 @@ class DTWRecognizer:
                     print(f"  Error loading {template_file}: {e}")
         
         print(f"\nTotal templates loaded: {sum(len(v) for v in self.templates.values())}")
+        
+        # Show format distribution
+        format_count = {}
+        for vowel, templates_list in self.templates.items():
+            for template in templates_list:
+                ext = os.path.splitext(template['file'])[1].lower()
+                format_count[ext] = format_count.get(ext, 0) + 1
+        
+        if format_count:
+            print("Format distribution:")
+            for fmt, count in sorted(format_count.items()):
+                print(f"  {fmt}: {count} files")
     
     def classify(self, test_features):
         """
@@ -133,7 +222,7 @@ class DTWRecognizer:
         
         for vowel in self.vowels:
             vowel_dir = os.path.join(self.data_dir, vowel)
-            test_files = sorted(glob.glob(os.path.join(vowel_dir, 'uji_p*.wav')))
+            test_files = self.find_audio_files(vowel_dir, 'uji_p')
             
             if not test_files:
                 print(f"No test files found for vowel '{vowel}'")
@@ -216,7 +305,7 @@ class DTWRecognizer:
         
         for vowel in self.vowels:
             vowel_dir = os.path.join(self.data_dir, vowel)
-            test_files = sorted(glob.glob(os.path.join(vowel_dir, 'uji_p*.wav')))
+            test_files = self.find_audio_files(vowel_dir, 'uji_p')
             
             if not test_files:
                 continue
