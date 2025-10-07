@@ -263,9 +263,12 @@ class DTWRecognizer:
             'results': results
         }
     
-    def evaluate(self):
+    def evaluate(self, unknown_threshold=None):
         """
         Run complete evaluation: closed-set, open-set, and compute average
+        
+        Args:
+            unknown_threshold: Optional threshold for open-set evaluation
         """
         print("\n" + "="*60)
         print("DTW SPEECH RECOGNITION SYSTEM - EVALUATION")
@@ -282,7 +285,7 @@ class DTWRecognizer:
         closed_set_results = self.evaluate_closed_set()
         
         # Evaluate open-set
-        open_set_results = self.evaluate_open_set()
+        open_set_results = self.evaluate_open_set(unknown_threshold=unknown_threshold)
         
         # Compute average accuracy
         avg_accuracy = (closed_set_results['accuracy'] + open_set_results['accuracy']) / 2
@@ -331,7 +334,7 @@ def main():
     recognizer = DTWRecognizer(data_dir=args.data_dir)
     
     # Run evaluation
-    recognizer.evaluate()
+    recognizer.evaluate(unknown_threshold=args.threshold)
 
 
 if __name__ == '__main__':
