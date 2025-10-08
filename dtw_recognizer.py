@@ -146,7 +146,7 @@ class DTWRecognizer:
                 try:
                     # Validate file before processing
                     if not self.validate_audio_file(template_file):
-                        print(f"  Warning: Invalid audio file {os.path.basename(template_file)}")
+                        print(f"  Warning: Invalid audio file {os.path.basename(template_file)} in {vowel_dir}")
                         continue
                         
                     features = self.extract_mfcc_features(template_file)
