@@ -45,36 +45,45 @@ def example_single_classification():
         print("Error: No templates found.")
         return
     
-    # Classify a single test file (try different formats)
-    test_files = [
-        'data/a/uji_p1.wav',
-        'data/a/uji_p1.mp3',  # If available
-        'data/a/uji_p1.flac'  # If available
-    ]
+    # Classify a single test file from closed_test directory
+    import os
+    test_files = []
     
-    for test_file in test_files:
-        try:
-            print(f"\nTrying to classify: {test_file}")
-            
-            # Check if file exists
-            import os
-            if not os.path.exists(test_file):
-                print(f"  File not found: {test_file}")
-                continue
+    # Try to find test files in closed_test directory
+    closed_test_dir = 'data/closed_test/a'
+    if os.path.exists(closed_test_dir):
+        for ext in recognizer.get_supported_formats():
+            pattern = os.path.join(closed_test_dir, f'*{ext}')
+            import glob
+            files = glob.glob(pattern)
+            test_files.extend(files)
+    
+    if not test_files:
+        print("No test files found in data/closed_test/a directory")
+        return
+    
+    test_file = test_files[0]
+    
+    try:
+        print(f"\nClassifying: {test_file}")
+        
+        test_features = recognizer.extract_mfcc_features(test_file)
+        
+        # Try different distance metrics
+        for metric in ['euclidean']:
+            print(f"\nUsing {metric} distance:")
+            try:
+                predicted, distance, all_distances = recognizer.classify(test_features, distance_metric=metric)
                 
-            test_features = recognizer.extract_mfcc_features(test_file)
-            predicted, distance, all_distances = recognizer.classify(test_features)
-            
-            print(f"  Predicted vowel: {predicted}")
-            print(f"  Distance: {distance:.2f}")
-            print("  Distances to all vowels:")
-            for vowel, dist in sorted(all_distances.items(), key=lambda x: x[1]):
-                print(f"    {vowel}: {dist:.2f}")
-            break  # Exit after first successful classification
-        except Exception as e:
-            print(f"  Error: {e}")
-    else:
-        print("No test files could be processed")
+                print(f"  Predicted vowel: {predicted}")
+                print(f"  Distance: {distance:.2f}")
+                print("  Distances to all vowels:")
+                for vowel, dist in sorted(all_distances.items(), key=lambda x: x[1]):
+                    print(f"    {vowel}: {dist:.2f}")
+            except NotImplementedError as e:
+                print(f"  {e}")
+    except Exception as e:
+        print(f"  Error: {e}")
 
 def example_custom_evaluation():
     """Example of custom evaluation with specific parameters"""
@@ -84,14 +93,17 @@ def example_custom_evaluation():
     
     recognizer = DTWRecognizer(data_dir='data')
     
-    # Run evaluation with custom threshold
-    results = recognizer.evaluate(unknown_threshold=1500.0)
-    
-    if results:
-        print("\nDetailed Results:")
-        print(f"  Closed-set: {results['closed_set']['correct']}/{results['closed_set']['total']}")
-        print(f"  Open-set: {results['open_set']['correct']}/{results['open_set']['total']}")
-        print(f"  Average: {results['average_accuracy']:.2f}%")
+    # Run evaluation with custom threshold and distance metric
+    try:
+        results = recognizer.evaluate(unknown_threshold=1500.0, distance_metric='euclidean')
+        
+        if results:
+            print("\nDetailed Results:")
+            print(f"  Closed-set: {results['closed_set']['correct']}/{results['closed_set']['total']}")
+            print(f"  Open-set: {results['open_set']['correct']}/{results['open_set']['total']}")
+            print(f"  Average: {results['average_accuracy']:.2f}%")
+    except Exception as e:
+        print(f"Error during evaluation: {e}")
 
 def main():
     """Run all examples"""

@@ -1,30 +1,60 @@
 # Data Directory Structure
 
-This directory contains audio samples for vowel recognition.
+This directory contains audio samples for vowel recognition organized in a folder-based structure.
 
 ## Structure
-- Each vowel (a, i, u, e, o) has its own subdirectory
-- Template files: `template_p1.wav`, `template_p2.wav`, ..., `template_p5.wav`
-- Test files: `uji_p1.wav`, `uji_p2.wav`, ..., `uji_pN.wav`
 
-## File Format
-- Audio format: WAV
-- Sampling rate: 16 kHz (recommended)
-- Channels: Mono
+The data directory should contain three main subdirectories:
 
-## Example
+### 1. train/
+Training data for creating generalized templates. Each vowel has its own subdirectory containing training audio files.
+
 ```
-data/
+train/
 ├── a/
-│   ├── template_p1.wav
-│   ├── template_p2.wav
-│   ├── template_p3.wav
-│   ├── template_p4.wav
-│   ├── template_p5.wav
-│   ├── uji_p1.wav
-│   └── uji_p2.wav
+│   ├── sample1.wav
+│   ├── sample2.wav
+│   └── ...
 ├── i/
-│   ├── template_p1.wav
+├── u/
+├── e/
+└── o/
+```
+
+### 2. closed_test/
+Closed-set test data containing only known vowels. Each vowel has its own subdirectory.
+
+```
+closed_test/
+├── a/
+│   ├── test1.wav
+│   └── ...
+├── i/
+├── u/
+├── e/
+└── o/
+```
+
+### 3. open_test/
+Open-set test data that can contain both known vowels and unknown samples. Each label has its own subdirectory.
+
+```
+open_test/
+├── a/
+│   └── ...
+├── i/
+│   └── ...
+├── unknown/
 │   └── ...
 └── ...
 ```
+
+## File Format
+- Audio format: WAV (or MP3, FLAC, M4A, OGG)
+- Sampling rate: 16 kHz (recommended)
+- Channels: Mono
+
+## Notes
+- File names can be arbitrary - the system reads all audio files from each directory
+- The directory name determines the label (e.g., files in `train/a/` are labeled as vowel 'a')
+- The `unknown` directory in `open_test/` should contain samples that don't belong to any known vowel class
