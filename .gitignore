@@ -210,3 +210,5 @@ __marimo__/
 data/*/*.wav
 
 cupas-data
+
+.DS_Store
