@@ -8,6 +8,7 @@ import os
 import glob
 import numpy as np
 from scipy.io import wavfile
+from scipy.stats import multivariate_normal
 import librosa
 import soundfile as sf
 from python_speech_features import mfcc, delta
@@ -92,7 +93,22 @@ class DTWRecognizer:
           2. Global averaging of all feature vectors
           3. Time-normalized averaging
         """
-        raise NotImplementedError("Mean template calculation not yet implemented")
+        if not features_list:
+            return None
+        
+        # Concatenate all feature vectors from all samples
+        all_features = []
+        for features in features_list:
+            # features shape: (n_frames, 39)
+            all_features.append(features)
+        
+        # Stack all features into one large matrix
+        all_features_concat = np.vstack(all_features)  # (total_frames, 39)
+        
+        # Compute mean across all frames from all samples
+        mean_template = np.mean(all_features_concat, axis=0)  # (39,)
+        
+        return mean_template
     
     def calculate_covariance_matrix(self, features_list, mean_template=None):
         """
@@ -113,7 +129,21 @@ class DTWRecognizer:
           3. Diagonal covariance (assume feature independence)
         - Consider regularization for numerical stability
         """
-        raise NotImplementedError("Covariance matrix calculation not yet implemented")
+        # Concatenate all features
+        all_features = np.vstack(features_list)  # (total_frames, 39)
+        
+        # Calculate mean if not provided
+        if mean_template is None:
+            mean_template = np.mean(all_features, axis=0)
+        
+        # Calculate covariance
+        cov_matrix = np.cov(all_features, rowvar=False)  # (39, 39)
+        
+        # Add regularization for numerical stability
+        regularization = 1e-6
+        cov_matrix += regularization * np.eye(cov_matrix.shape[0])
+        
+        return cov_matrix
     
     def extract_mfcc_features(self, audio_file):
         """
@@ -219,15 +249,15 @@ class DTWRecognizer:
             
             # TODO: Implement mean and covariance calculation
             # Calculate generalized template from all training features
-            # mean_template = calculate_mean_template(all_features)
-            # covariance_matrix = calculate_covariance_matrix(all_features)
-            
+            mean_template = self.calculate_mean_template(all_features)
+            covariance_matrix = self.calculate_covariance_matrix(all_features)
+
             # For now, store all features for future processing
             self.templates[vowel] = {
                 'raw_features': all_features,
                 'num_samples': len(all_features),
-                # 'mean': mean_template,  # TODO: Implement
-                # 'covariance': covariance_matrix  # TODO: Implement
+                'mean': mean_template,
+                'covariance': covariance_matrix
             }
             print(f"  Created template for vowel '{vowel}' from {len(all_features)} samples")
         
@@ -272,7 +302,31 @@ class DTWRecognizer:
         - Handle variable-length sequences
         - Consider frame independence assumption for simplicity
         """
-        raise NotImplementedError("Gaussian likelihood calculation not yet implemented")
+        # Flatten test features by taking mean across all frames
+        if len(test_features.shape) > 1:
+            test_vector = np.mean(test_features, axis=0)  # (39,)
+        else:
+            test_vector = test_features
+        
+        # Calculate log-likelihood using scipy's multivariate_normal
+        try:
+            log_likelihood = multivariate_normal.logpdf(
+                test_vector, 
+                mean=mean_template, 
+                cov=covariance_matrix,
+                allow_singular=True
+            )
+            
+            # Handle potential NaN or inf values
+            if not np.isfinite(log_likelihood):
+                log_likelihood = -1e10
+                
+        except Exception as e:
+            # Fallback to large negative value if computation fails
+            print(f"Warning: Gaussian likelihood calculation failed: {e}")
+            log_likelihood = -1e10
+        
+        return log_likelihood
     
     def classify(self, test_features, distance_metric='euclidean'):
         """
@@ -307,19 +361,17 @@ class DTWRecognizer:
                 # distances[vowel] = distance
                 raise NotImplementedError("Mahalanobis distance not yet implemented. TODO: Implement using mean and covariance.")
             
-            elif distance_metric == 'gaussian':
-                # TODO: Implement Gaussian log-likelihood
-                # Requires: mean template and covariance matrix
-                # score = calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
-                # distances[vowel] = score  # Higher is better, but we use as distance
-                raise NotImplementedError("Gaussian likelihood not yet implemented. TODO: Implement using mean and covariance.")
+            # elif distance_metric == 'gaussian':
+            #     # TODO: Implement Gaussian log-likelihood
+            #     # Requires: mean template and covariance matrix
+            #     score = self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
+            #     distances[vowel] = score  # Higher is better, but we use as distance
             
             elif distance_metric == 'negative_gaussian':
                 # TODO: Implement Negative Gaussian log-likelihood
                 # Requires: mean template and covariance matrix
-                # score = -calculate_gaussian_log_likelihood(test_features, template_data['mean'], template_data['covariance'])
-                # distances[vowel] = score  # Negative log-likelihood as distance
-                raise NotImplementedError("Negative Gaussian log-likelihood not yet implemented. TODO: Implement using mean and covariance.")
+                score = -self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
+                distances[vowel] = score  # Negative log-likelihood as distance
             
             else:
                 raise ValueError(f"Unknown distance metric: {distance_metric}. Choose from: euclidean, mahalanobis, gaussian, negative_gaussian")
