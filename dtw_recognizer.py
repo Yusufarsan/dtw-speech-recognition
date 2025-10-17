@@ -85,13 +85,6 @@ class DTWRecognizer:
         
         Returns:
             Mean template (average feature vector across all frames and samples)
-        
-        TODO: Implement mean calculation
-        - Handle variable-length sequences (different number of frames)
-        - Options: 
-          1. Frame-wise averaging after DTW alignment
-          2. Global averaging of all feature vectors
-          3. Time-normalized averaging
         """
         if not features_list:
             return None
@@ -120,14 +113,6 @@ class DTWRecognizer:
         
         Returns:
             Covariance matrix of shape (n_features, n_features)
-        
-        TODO: Implement covariance calculation
-        - Handle variable-length sequences
-        - Options:
-          1. Global covariance across all feature vectors
-          2. Frame-wise covariance after DTW alignment
-          3. Diagonal covariance (assume feature independence)
-        - Consider regularization for numerical stability
         """
         # Concatenate all features
         all_features = np.vstack(features_list)  # (total_frames, 39)
@@ -247,7 +232,6 @@ class DTWRecognizer:
                 print(f"  Warning: No valid features extracted for vowel '{vowel}'")
                 continue
             
-            # TODO: Implement mean and covariance calculation
             # Calculate generalized template from all training features
             mean_template = self.calculate_mean_template(all_features)
             covariance_matrix = self.calculate_covariance_matrix(all_features)
@@ -276,14 +260,31 @@ class DTWRecognizer:
         
         Returns:
             Mahalanobis distance (scalar)
-        
-        TODO: Implement Mahalanobis distance calculation
-        - Handle variable-length sequences
-        - Formula: sqrt((x - mu)^T * Sigma^-1 * (x - mu))
-        - Consider using numpy.linalg for matrix operations
-        - Handle singular/near-singular covariance matrices
         """
-        raise NotImplementedError("Mahalanobis distance calculation not yet implemented")
+        # Flatten test features by taking mean across all frames
+        if len(test_features.shape) > 1:
+            test_vector = np.mean(test_features, axis=0)  # (39,)
+        else:
+            test_vector = test_features
+        
+        # Calculate difference
+        diff = test_vector - mean_template
+        
+        # Calculate Mahalanobis distance
+        # Formula: sqrt((x - mu)^T * Sigma^-1 * (x - mu))
+        try:
+            inv_cov = np.linalg.inv(covariance_matrix)
+            mahalanobis_dist = np.sqrt(np.dot(np.dot(diff, inv_cov), diff))
+            
+            # Handle potential NaN or inf values
+            if not np.isfinite(mahalanobis_dist):
+                mahalanobis_dist = float('inf')
+                
+        except np.linalg.LinAlgError:
+            # Fallback if matrix is singular
+            mahalanobis_dist = float('inf')
+        
+        return mahalanobis_dist
     
     def calculate_gaussian_likelihood(self, test_features, mean_template, covariance_matrix):
         """
@@ -296,11 +297,6 @@ class DTWRecognizer:
         
         Returns:
             Log-likelihood (scalar, higher is better)
-        
-        TODO: Implement Gaussian likelihood calculation
-        - Formula: log(p(x|mu, Sigma)) = -0.5 * [(x-mu)^T * Sigma^-1 * (x-mu) + log|Sigma| + d*log(2*pi)]
-        - Handle variable-length sequences
-        - Consider frame independence assumption for simplicity
         """
         # Flatten test features by taking mean across all frames
         if len(test_features.shape) > 1:
@@ -355,21 +351,14 @@ class DTWRecognizer:
                 distances[vowel] = min(vowel_distances) if vowel_distances else float('inf')
             
             elif distance_metric == 'mahalanobis':
-                # TODO: Implement Mahalanobis distance
-                # Requires: mean template and covariance matrix
-                # distance = calculate_mahalanobis_distance(test_features, template_data['mean'], template_data['covariance'])
-                # distances[vowel] = distance
-                raise NotImplementedError("Mahalanobis distance not yet implemented. TODO: Implement using mean and covariance.")
+                distance = self.calculate_mahalanobis_distance(test_features, template_data['mean'], template_data['covariance'])
+                distances[vowel] = distance
             
-            # elif distance_metric == 'gaussian':
-            #     # TODO: Implement Gaussian log-likelihood
-            #     # Requires: mean template and covariance matrix
-            #     score = self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
-            #     distances[vowel] = score  # Higher is better, but we use as distance
+            elif distance_metric == 'gaussian':
+                score = self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
+                distances[vowel] = -score  # Negative because we want minimum distance
             
             elif distance_metric == 'negative_gaussian':
-                # TODO: Implement Negative Gaussian log-likelihood
-                # Requires: mean template and covariance matrix
                 score = -self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
                 distances[vowel] = score  # Negative log-likelihood as distance
             
@@ -499,7 +488,12 @@ class DTWRecognizer:
                             if distance_metric == 'euclidean':
                                 alignment = dtw(feat1, feat2, dist_method='euclidean')
                                 all_template_distances.append(alignment.distance)
-                            # TODO: Add threshold calculation for other distance metrics
+                            elif distance_metric == 'mahalanobis':
+                                distance = self.calculate_mahalanobis_distance(feat1, template_data['mean'], template_data['covariance'])
+                                all_template_distances.append(distance)
+                            elif distance_metric in ['gaussian', 'negative_gaussian']:
+                                score = self.calculate_gaussian_likelihood(feat1, template_data['mean'], template_data['covariance'])
+                                all_template_distances.append(-score)
             
             if all_template_distances:
                 unknown_threshold = 1.5 * np.median(all_template_distances)

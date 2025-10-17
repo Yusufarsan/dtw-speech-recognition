@@ -95,7 +95,7 @@ def example_custom_evaluation():
     
     # Run evaluation with custom threshold and distance metric
     try:
-        results = recognizer.evaluate(unknown_threshold=1500.0, distance_metric='euclidean')
+        results = recognizer.evaluate(unknown_threshold=1500.0, distance_metric='mahalanobis')
         
         if results:
             print("\nDetailed Results:")
