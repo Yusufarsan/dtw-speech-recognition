@@ -17,6 +17,13 @@ This system implements a simple speech recognition system using DTW algorithm to
   - Closed-set recognition (known vowels only)
   - Open-set recognition (with unknown rejection threshold)
   - Average accuracy reporting
+- **Visualization**: Comprehensive visualization tools
+  - Confusion matrices for performance analysis
+  - DTW alignment path visualization
+  - MFCC feature spectrograms
+  - Distance distribution analysis
+  - Template feature visualization
+  - Threshold analysis for open-set recognition
 
 ## Installation
 
@@ -44,6 +51,11 @@ Required packages:
 - `scipy>=1.5.0`
 - `python-speech-features>=0.6`
 - `dtw-python>=1.1.0`
+- `librosa>=0.8.0`
+- `soundfile>=0.10.0`
+- `matplotlib>=3.3.0`
+- `seaborn>=0.11.0`
+- `scikit-learn>=0.24.0`
 
 ## Dataset Structure
 
@@ -129,6 +141,50 @@ python dtw_recognizer.py --distance-metric negative_gaussian
 ```
 
 Note: Mahalanobis and Gaussian-based metrics require implementation of mean and covariance calculation.
+
+## Visualization
+
+The system includes comprehensive visualization tools for analyzing performance and understanding the DTW algorithm.
+
+### Quick Start
+
+Run the complete visualization example:
+
+```bash
+python visualization_example.py
+```
+
+This generates all visualizations and saves them in the `visualizations/` directory.
+
+### Available Visualizations
+
+1. **Confusion Matrix** - Shows classification accuracy per vowel
+2. **DTW Alignment Path** - Visualizes how DTW warps sequences
+3. **MFCC Features** - Displays audio waveform and spectrogram
+4. **Distance Distribution** - Compares correct vs incorrect predictions
+5. **Template Features** - Shows learned template patterns
+6. **Accuracy Comparison** - Bar chart of performance metrics
+7. **Threshold Analysis** - Distance distributions with threshold line
+
+### Example Usage
+
+```python
+from dtw_recognizer import DTWRecognizer
+
+# Initialize and evaluate
+recognizer = DTWRecognizer(data_dir='data')
+recognizer.load_templates()
+results = recognizer.evaluate()
+
+# Generate visualizations
+recognizer.visualize_confusion_matrix(results['closed_set'])
+recognizer.visualize_accuracy_comparison(results['closed_set'], results['open_set'])
+recognizer.visualize_distance_distribution(results['closed_set'])
+```
+
+### Documentation
+
+For detailed visualization guide, see [VISUALIZATION_GUIDE.md](VISUALIZATION_GUIDE.md)
 
 ### Example Output
 

@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-DTW-based Speech Recognition System for Vowel Recognition
-Uses MFCC features (13 MFCC + Δ + ΔΔ = 39D) and DTW for classification
-"""
-
 import os
 import glob
 import numpy as np
@@ -13,12 +7,12 @@ import librosa
 import soundfile as sf
 from python_speech_features import mfcc, delta
 from dtw import dtw
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
 
 
 class DTWRecognizer:
-    """
-    Speech recognition system using DTW algorithm
-    """
     
     def __init__(self, data_dir='data'):
         """
@@ -70,7 +64,6 @@ class DTWRecognizer:
             True if file is valid, False otherwise
         """
         try:
-            # Try to load a small portion to validate
             _, sr = librosa.load(audio_file, sr=None, duration=0.1)
             return True
         except Exception:
@@ -142,7 +135,6 @@ class DTWRecognizer:
             39D MFCC features array
         """
         try:
-            # Use librosa for universal audio loading
             # Auto-resample to 16kHz for consistency
             signal, sample_rate = librosa.load(audio_file, sr=16000, mono=True)
             
@@ -157,7 +149,6 @@ class DTWRecognizer:
                     # Convert to mono if stereo
                     if len(signal.shape) > 1:
                         signal = np.mean(signal, axis=1)
-                    # Ensure int16 format
                     if signal.dtype != np.int16:
                         signal = (signal / np.max(np.abs(signal)) * 32767).astype(np.int16)
                 else:
@@ -169,10 +160,10 @@ class DTWRecognizer:
         mfcc_features = mfcc(signal, sample_rate, numcep=13, nfilt=26, 
                             nfft=512, winfunc=np.hamming)
         
-        # Compute delta (first derivative)
+        # first derivative
         delta_features = delta(mfcc_features, 2)
         
-        # Compute delta-delta (second derivative)
+        # second derivative
         delta_delta_features = delta(delta_features, 2)
         
         # Concatenate all features to get 39D feature vector
@@ -270,7 +261,6 @@ class DTWRecognizer:
         # Calculate difference
         diff = test_vector - mean_template
         
-        # Calculate Mahalanobis distance
         # Formula: sqrt((x - mu)^T * Sigma^-1 * (x - mu))
         try:
             inv_cov = np.linalg.inv(covariance_matrix)
@@ -622,45 +612,279 @@ class DTWRecognizer:
             'open_set': open_set_results,
             'average_accuracy': avg_accuracy
         }
-
-
-def main():
-    """
-    Main function to run the DTW speech recognition system
-    """
-    import argparse
     
-    parser = argparse.ArgumentParser(
-        description='DTW-based Speech Recognition System for Vowel Recognition'
-    )
-    parser.add_argument(
-        '--data-dir',
-        type=str,
-        default='data',
-        help='Directory containing train/, closed_test/, and open_test/ subdirectories (default: data)'
-    )
-    parser.add_argument(
-        '--threshold',
-        type=float,
-        default=None,
-        help='Distance threshold for open-set evaluation (default: auto-calculated)'
-    )
-    parser.add_argument(
-        '--distance-metric',
-        type=str,
-        default='euclidean',
-        choices=['euclidean', 'mahalanobis', 'gaussian', 'negative_gaussian'],
-        help='Distance metric to use for classification (default: euclidean)'
-    )
+    def visualize_confusion_matrix(self, results, title="Confusion Matrix", save_path=None):
+        """
+        Visualize confusion matrix from evaluation results
+        
+        Args:
+            results: Dictionary containing evaluation results with 'results' key
+            title: Title for the plot
+            save_path: Optional path to save the figure
+        """
+        # Extract true and predicted labels
+        true_labels = [r['true_label'] for r in results['results']]
+        pred_labels = [r['predicted_label'] for r in results['results']]
+        
+        # Get unique labels
+        labels = sorted(set(true_labels + pred_labels))
+        
+        # Compute confusion matrix
+        cm = confusion_matrix(true_labels, pred_labels, labels=labels)
+        
+        # Create figure
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                    xticklabels=labels, yticklabels=labels,
+                    cbar_kws={'label': 'Count'})
+        plt.title(title, fontsize=16, fontweight='bold')
+        plt.xlabel('Predicted Label', fontsize=12)
+        plt.ylabel('True Label', fontsize=12)
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()
     
-    args = parser.parse_args()
+    def visualize_dtw_alignment(self, test_features, template_features, save_path=None):
+        """
+        Visualize DTW alignment path between test and template features
+        
+        Args:
+            test_features: Test feature matrix
+            template_features: Template feature matrix
+            save_path: Optional path to save the figure
+        """
+        # Compute DTW alignment
+        alignment = dtw(test_features, template_features, dist_method='euclidean')
+        
+        # Create figure
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
+        
+        # Plot 1: Test features (first MFCC)
+        ax1.plot(test_features[:, 0], 'b-', linewidth=2, label='Test Audio')
+        ax1.set_title('Test Audio Features (1st MFCC)', fontsize=12, fontweight='bold')
+        ax1.set_xlabel('Frame')
+        ax1.set_ylabel('MFCC Value')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Template features (first MFCC)
+        ax2.plot(template_features[:, 0], 'r-', linewidth=2, label='Template Audio')
+        ax2.set_title('Template Audio Features (1st MFCC)', fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Frame')
+        ax2.set_ylabel('MFCC Value')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: DTW alignment path
+        ax3.plot(alignment.index1, alignment.index2, 'g-', linewidth=2, alpha=0.7)
+        ax3.fill_between(alignment.index1, alignment.index2, alpha=0.3, color='green')
+        ax3.set_title(f'DTW Alignment Path (Distance: {alignment.distance:.2f})', 
+                     fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Test Audio Frame')
+        ax3.set_ylabel('Template Audio Frame')
+        ax3.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()
     
-    # Initialize recognizer
-    recognizer = DTWRecognizer(data_dir=args.data_dir)
+    def visualize_mfcc_features(self, audio_file, save_path=None):
+        """
+        Visualize MFCC features from an audio file
+        
+        Args:
+            audio_file: Path to audio file
+            save_path: Optional path to save the figure
+        """
+        # Load audio
+        signal, sr = librosa.load(audio_file, sr=16000)
+        
+        # Extract MFCC
+        mfccs = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13)
+        
+        # Create figure
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        
+        # Plot 1: Waveform
+        time = np.arange(len(signal)) / sr
+        ax1.plot(time, signal, 'b-', linewidth=0.5)
+        ax1.set_title(f'Audio Waveform: {os.path.basename(audio_file)}', 
+                     fontsize=12, fontweight='bold')
+        ax1.set_xlabel('Time (s)')
+        ax1.set_ylabel('Amplitude')
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: MFCC Spectrogram
+        im = ax2.imshow(mfccs, aspect='auto', origin='lower', cmap='viridis')
+        ax2.set_title('MFCC Features (13 coefficients)', fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Frame')
+        ax2.set_ylabel('MFCC Coefficient')
+        plt.colorbar(im, ax=ax2, label='Magnitude')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()
     
-    # Run evaluation
-    recognizer.evaluate(unknown_threshold=args.threshold, distance_metric=args.distance_metric)
-
-
-if __name__ == '__main__':
-    main()
+    def visualize_distance_distribution(self, results, save_path=None):
+        """
+        Visualize distance distribution for correct vs incorrect predictions
+        
+        Args:
+            results: Dictionary containing evaluation results with 'results' key
+            save_path: Optional path to save the figure
+        """
+        # Extract distances and correctness
+        correct_distances = [r['distance'] for r in results['results'] if r['correct']]
+        incorrect_distances = [r['distance'] for r in results['results'] if not r['correct']]
+        
+        # Create figure
+        plt.figure(figsize=(10, 6))
+        
+        plt.hist(correct_distances, bins=30, alpha=0.7, label='Correct', color='green', edgecolor='black')
+        plt.hist(incorrect_distances, bins=30, alpha=0.7, label='Incorrect', color='red', edgecolor='black')
+        
+        plt.xlabel('DTW Distance', fontsize=12)
+        plt.ylabel('Frequency', fontsize=12)
+        plt.title('Distance Distribution: Correct vs Incorrect Predictions', 
+                 fontsize=14, fontweight='bold')
+        plt.legend(fontsize=11)
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()
+    
+    def visualize_template_features(self, save_path=None):
+        """
+        Visualize mean template features for each vowel
+        
+        Args:
+            save_path: Optional path to save the figure
+        """
+        if not self.templates:
+            print("No templates loaded. Run load_templates() first.")
+            return
+        
+        # Create figure
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
+        
+        for idx, vowel in enumerate(self.vowels):
+            if vowel not in self.templates:
+                continue
+            
+            mean_features = self.templates[vowel]['mean']
+            
+            # Plot MFCC coefficients
+            axes[idx].bar(range(len(mean_features)), mean_features, color='steelblue', edgecolor='black')
+            axes[idx].set_title(f'Vowel "{vowel}" - Mean Template', fontsize=11, fontweight='bold')
+            axes[idx].set_xlabel('Feature Index')
+            axes[idx].set_ylabel('Mean Value')
+            axes[idx].grid(True, alpha=0.3)
+        
+        # Remove extra subplot
+        axes[-1].axis('off')
+        
+        plt.suptitle('Mean Template Features for Each Vowel', fontsize=16, fontweight='bold')
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()
+    
+    def visualize_accuracy_comparison(self, closed_results, open_results, save_path=None):
+        """
+        Visualize accuracy comparison between closed-set and open-set
+        
+        Args:
+            closed_results: Closed-set evaluation results
+            open_results: Open-set evaluation results
+            save_path: Optional path to save the figure
+        """
+        categories = ['Closed-Set', 'Open-Set', 'Average']
+        accuracies = [
+            closed_results['accuracy'],
+            open_results['accuracy'],
+            (closed_results['accuracy'] + open_results['accuracy']) / 2
+        ]
+        
+        plt.figure(figsize=(8, 6))
+        bars = plt.bar(categories, accuracies, color=['skyblue', 'lightcoral', 'lightgreen'], 
+                       edgecolor='black', linewidth=2)
+        
+        # Add value labels on bars
+        for bar, acc in zip(bars, accuracies):
+            height = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{acc:.2f}%', ha='center', va='bottom', fontsize=12, fontweight='bold')
+        
+        plt.ylabel('Accuracy (%)', fontsize=12)
+        plt.title('DTW Speech Recognition Performance', fontsize=14, fontweight='bold')
+        plt.ylim(0, 110)
+        plt.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()
+    
+    def visualize_open_set_threshold_analysis(self, results, save_path=None):
+        """
+        Visualize threshold analysis for open-set recognition
+        
+        Args:
+            results: Open-set evaluation results
+            save_path: Optional path to save the figure
+        """
+        threshold = results['threshold']
+        
+        # Extract distances by true label
+        distances_by_label = {}
+        for r in results['results']:
+            true_label = r['true_label']
+            distance = r['distance']
+            if true_label not in distances_by_label:
+                distances_by_label[true_label] = []
+            distances_by_label[true_label].append(distance)
+        
+        # Create figure
+        plt.figure(figsize=(12, 6))
+        
+        colors = plt.cm.Set3(np.linspace(0, 1, len(distances_by_label)))
+        
+        for idx, (label, distances) in enumerate(distances_by_label.items()):
+            plt.hist(distances, bins=20, alpha=0.6, label=label, 
+                    color=colors[idx], edgecolor='black')
+        
+        # Draw threshold line
+        plt.axvline(x=threshold, color='red', linestyle='--', linewidth=2, 
+                   label=f'Threshold: {threshold:.2f}')
+        
+        plt.xlabel('DTW Distance', fontsize=12)
+        plt.ylabel('Frequency', fontsize=12)
+        plt.title('Open-Set Recognition: Distance Distribution by Label', 
+                 fontsize=14, fontweight='bold')
+        plt.legend(fontsize=10)
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()

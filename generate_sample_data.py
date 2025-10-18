@@ -1,23 +1,15 @@
-#!/usr/bin/env python3
-"""
-Generate sample WAV files for testing the DTW speech recognition system
-Creates simple sine wave audio files with different frequencies for each vowel
-"""
-
 import os
 import numpy as np
 from scipy.io import wavfile
 
-# Create sample data with different frequencies for each vowel
 vowels = {
-    'a': 700,   # Hz - simulating first formant of /a/
-    'i': 300,   # Hz - simulating first formant of /i/
-    'u': 400,   # Hz - simulating first formant of /u/
-    'e': 500,   # Hz - simulating first formant of /e/
-    'o': 600,   # Hz - simulating first formant of /o/
+    'a': 700,
+    'i': 300,
+    'u': 400,
+    'e': 500,
+    'o': 600,
 }
 
-# Parameters
 sample_rate = 16000  # 16 kHz
 duration = 0.5       # 0.5 seconds
 amplitude = 0.3
