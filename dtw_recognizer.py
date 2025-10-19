@@ -323,8 +323,7 @@ class DTWRecognizer:
             distance_metric: Distance/score function to use. Options:
                            - 'euclidean': Standard DTW with Euclidean distance
                            - 'mahalanobis': Mahalanobis distance
-                           - 'gaussian': Gaussian log-likelihood
-                           - 'negative_gaussian': Negative Gaussian log-likelihood
+                           - 'gaussian': Gaussian log-likelihood (converted to distance)
             
         Returns:
             Tuple of (predicted_vowel, min_distance, distances_dict)
@@ -345,15 +344,11 @@ class DTWRecognizer:
                 distances[vowel] = distance
             
             elif distance_metric == 'gaussian':
-                score = self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
-                distances[vowel] = -score  # Negative because we want minimum distance
-            
-            elif distance_metric == 'negative_gaussian':
-                score = -self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
-                distances[vowel] = score  # Negative log-likelihood as distance
+                log_likelihood = self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
+                distances[vowel] = -log_likelihood  # Convert to distance (lower is better)
             
             else:
-                raise ValueError(f"Unknown distance metric: {distance_metric}. Choose from: euclidean, mahalanobis, gaussian, negative_gaussian")
+                raise ValueError(f"Unknown distance metric: {distance_metric}. Choose from: euclidean, mahalanobis, gaussian")
         
         # Find vowel with minimum distance
         if distances:
@@ -481,9 +476,9 @@ class DTWRecognizer:
                             elif distance_metric == 'mahalanobis':
                                 distance = self.calculate_mahalanobis_distance(feat1, template_data['mean'], template_data['covariance'])
                                 all_template_distances.append(distance)
-                            elif distance_metric in ['gaussian', 'negative_gaussian']:
-                                score = self.calculate_gaussian_likelihood(feat1, template_data['mean'], template_data['covariance'])
-                                all_template_distances.append(-score)
+                            elif distance_metric == 'gaussian':
+                                log_likelihood = self.calculate_gaussian_likelihood(feat1, template_data['mean'], template_data['covariance'])
+                                all_template_distances.append(-log_likelihood)
             
             if all_template_distances:
                 unknown_threshold = 1.5 * np.median(all_template_distances)
@@ -575,7 +570,7 @@ class DTWRecognizer:
         
         Args:
             unknown_threshold: Optional threshold for open-set evaluation
-            distance_metric: Distance metric to use ('euclidean', 'mahalanobis', 'gaussian', 'negative_gaussian')
+            distance_metric: Distance metric to use ('euclidean', 'mahalanobis', 'gaussian')
         """
         print("\n" + "="*60)
         print("DTW SPEECH RECOGNITION SYSTEM - EVALUATION")
