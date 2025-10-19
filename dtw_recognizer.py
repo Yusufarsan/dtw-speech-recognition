@@ -240,7 +240,7 @@ class DTWRecognizer:
         total_samples = sum(template['num_samples'] for template in self.templates.values())
         print(f"Total training samples processed: {total_samples}")
     
-    def calculate_mahalanobis_distance(self, test_features, mean_template, covariance_matrix):
+    def calculate_mahalanobis_distance(self, test_features, mean_template, covariance_matrix,regularization=1e-6):
         """
         Calculate Mahalanobis distance between test features and template
         
@@ -260,21 +260,37 @@ class DTWRecognizer:
         
         # Calculate difference
         diff = test_vector - mean_template
-        
-        # Formula: sqrt((x - mu)^T * Sigma^-1 * (x - mu))
+        cov = covariance_matrix.astype(float).copy()
+        cov += regularization * np.eye(cov.shape[0])
+
         try:
-            inv_cov = np.linalg.inv(covariance_matrix)
-            mahalanobis_dist = np.sqrt(np.dot(np.dot(diff, inv_cov), diff))
-            
-            # Handle potential NaN or inf values
-            if not np.isfinite(mahalanobis_dist):
-                mahalanobis_dist = float('inf')
-                
+            # numerically stable solve: cov * x = diff -> x = inv(cov) * diff
+            sol = np.linalg.solve(cov, diff)
+            quad = np.dot(diff, sol)
+            if not np.isfinite(quad) or quad < 0:
+                return float('inf')
+            return float(np.sqrt(quad))
         except np.linalg.LinAlgError:
-            # Fallback if matrix is singular
-            mahalanobis_dist = float('inf')
-        
-        return mahalanobis_dist
+            # fallback to pseudo-inverse
+            pinv = np.linalg.pinv(cov)
+            quad = np.dot(diff, pinv.dot(diff))
+            if not np.isfinite(quad) or quad < 0:
+                return float('inf')
+            return float(np.sqrt(quad))
+        # # Formula: sqrt((x - mu)^T * Sigma^-1 * (x - mu))
+        # try:
+        #     inv_cov = np.linalg.inv(covariance_matrix)
+        #     mahalanobis_dist = np.sqrt(np.dot(np.dot(diff, inv_cov), diff))
+        #
+        #     # Handle potential NaN or inf values
+        #     if not np.isfinite(mahalanobis_dist):
+        #         mahalanobis_dist = float('inf')
+        #
+        # except np.linalg.LinAlgError:
+        #     # Fallback if matrix is singular
+        #     mahalanobis_dist = float('inf')
+        #
+        # return mahalanobis_dist
     
     def calculate_gaussian_likelihood(self, test_features, mean_template, covariance_matrix):
         """
