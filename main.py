@@ -95,7 +95,7 @@ def run_visualization():
     
     os.makedirs('visualizations', exist_ok=True)
     
-    metrics = ['euclidean', 'mahalanobis', 'gaussian', 'negative_gaussian']
+    metrics = ['euclidean', 'mahalanobis', 'gaussian']
     
     for metric in metrics:
         print(f"\nGenerating visualizations for {metric} metric...")
