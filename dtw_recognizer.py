@@ -2,7 +2,7 @@ import os
 import glob
 import numpy as np
 from scipy.io import wavfile
-from scipy.stats import multivariate_normal
+from scipy.spatial.distance import euclidean
 import librosa
 import soundfile as sf
 from python_speech_features import mfcc, delta
@@ -14,17 +14,21 @@ from sklearn.metrics import confusion_matrix, classification_report
 
 class DTWRecognizer:
     
-    def __init__(self, data_dir='data'):
+    def __init__(self, data_dir='data', k_segments=1, sampling_rate=16000):
         """
-        Initialize the DTW recognizer
+        Initialize the DTW recognizer with generalized segmented templates.
         
         Args:
             data_dir: Directory containing vowel subdirectories
+            k_segments: The number of segments to create for each 
+                        generalized template.
         """
         self.data_dir = data_dir
         self.vowels = ['a', 'i', 'u', 'e', 'o']
+        self.k_segments = k_segments
         self.templates = {}
         self.supported_formats = ['.wav', '.mp3', '.flac', '.m4a', '.ogg']
+        self.sampling_rate = sampling_rate
     
     def get_supported_formats(self):
         """
@@ -69,60 +73,6 @@ class DTWRecognizer:
         except Exception:
             return False
         
-    def calculate_mean_template(self, features_list):
-        """
-        Calculate mean template from a list of feature matrices
-        
-        Args:
-            features_list: List of feature matrices, each of shape (n_frames, n_features)
-        
-        Returns:
-            Mean template (average feature vector across all frames and samples)
-        """
-        if not features_list:
-            return None
-        
-        # Concatenate all feature vectors from all samples
-        all_features = []
-        for features in features_list:
-            # features shape: (n_frames, 39)
-            all_features.append(features)
-        
-        # Stack all features into one large matrix
-        all_features_concat = np.vstack(all_features)  # (total_frames, 39)
-        
-        # Compute mean across all frames from all samples
-        mean_template = np.mean(all_features_concat, axis=0)  # (39,)
-        
-        return mean_template
-    
-    def calculate_covariance_matrix(self, features_list, mean_template=None):
-        """
-        Calculate covariance matrix from a list of feature matrices
-        
-        Args:
-            features_list: List of feature matrices, each of shape (n_frames, n_features)
-            mean_template: Pre-calculated mean template (optional)
-        
-        Returns:
-            Covariance matrix of shape (n_features, n_features)
-        """
-        # Concatenate all features
-        all_features = np.vstack(features_list)  # (total_frames, 39)
-        
-        # Calculate mean if not provided
-        if mean_template is None:
-            mean_template = np.mean(all_features, axis=0)
-        
-        # Calculate covariance
-        cov_matrix = np.cov(all_features, rowvar=False)  # (39, 39)
-        
-        # Add regularization for numerical stability
-        regularization = 1e-6
-        cov_matrix += regularization * np.eye(cov_matrix.shape[0])
-        
-        return cov_matrix
-    
     def extract_mfcc_features(self, audio_file):
         """
         Extract 39D MFCC features (13 MFCC + Δ + ΔΔ) from audio file
@@ -136,7 +86,7 @@ class DTWRecognizer:
         """
         try:
             # Auto-resample to 16kHz for consistency
-            signal, sample_rate = librosa.load(audio_file, sr=16000, mono=True)
+            signal, sample_rate = librosa.load(audio_file, sr=self.sampling_rate, mono=True)
             
             # Convert to int16 for compatibility with python-speech-features
             signal = (signal * 32767).astype(np.int16)
@@ -173,11 +123,14 @@ class DTWRecognizer:
     
     def load_templates(self):
         """
-        Load training data and create generalized templates using mean and covariance
-        Training data is organized in train/ directory with subdirectories for each vowel
+        Load training data and create generalized, segmented templates.
+        Implements "Generalization DTW Template"  by aligning
+        all samples to a reference, averaging, and then segmenting
+        the result into k_segments.
         """
-        print("Loading training data and creating generalized templates...")
+        print("Loading training data and creating generalized segmented templates...")
         print(f"Supported formats: {', '.join(self.supported_formats)}")
+        print(f"Number of segments (k): {self.k_segments}")
         
         train_dir = os.path.join(self.data_dir, 'train')
         
@@ -208,7 +161,6 @@ class DTWRecognizer:
             print(f"  Loading training files for vowel '{vowel}':")
             for audio_file in sorted(audio_files):
                 try:
-                    # Validate file before processing
                     if not self.validate_audio_file(audio_file):
                         print(f"    Warning: Invalid audio file {os.path.basename(audio_file)}")
                         continue
@@ -222,149 +174,162 @@ class DTWRecognizer:
             if not all_features:
                 print(f"  Warning: No valid features extracted for vowel '{vowel}'")
                 continue
-            
-            # Calculate generalized template from all training features
-            mean_template = self.calculate_mean_template(all_features)
-            covariance_matrix = self.calculate_covariance_matrix(all_features)
 
-            # For now, store all features for future processing
-            self.templates[vowel] = {
-                'raw_features': all_features,
-                'num_samples': len(all_features),
-                'mean': mean_template,
-                'covariance': covariance_matrix
-            }
-            print(f"  Created template for vowel '{vowel}' from {len(all_features)} samples")
+            # Generalized Template
+            # 1. reference template (median)
+            all_features.sort(key=len)
+            reference_template = all_features[len(all_features) // 2].copy()
+            ref_len = reference_template.shape[0]
+            
+            # 2. Initialize accumulators for averaging
+            sum_template = np.zeros_like(reference_template, dtype=float)
+            count_template = np.zeros((ref_len, 1), dtype=float)
+
+            # 3. Align templates
+            for features in all_features:
+                alignment = dtw(features, reference_template, 
+                                dist_method='euclidean', 
+                                keep_internals=True)
+                
+                for i, j in zip(alignment.index1, alignment.index2):
+                    sum_template[j] += features[i]
+                    count_template[j] += 1
+            
+            # 4. Calculate the average generalized template
+            count_template[count_template == 0] = 1.0
+            generalized_template = sum_template / count_template
+            
+            # 5. Segment generalized_template into k segments 
+            segmented_frames_list = np.array_split(generalized_template, self.k_segments)
+            
+            template_model = {'segments': [], 'segmented_means': []}
+            
+            # 6. Calculate mean and covariance for each segment
+            for segment_frames in segmented_frames_list:
+                if segment_frames.shape[0] == 0:
+                    continue
+                
+                # Calculate mean for the segment 
+                segment_mean = np.mean(segment_frames, axis=0)
+                
+                # Calculate covariance for the segment 
+                if segment_frames.shape[0] > 1:
+                    segment_cov = np.cov(segment_frames, rowvar=False)
+                else:
+                    # Handle single-frame segment (identity matrix)
+                    segment_cov = np.eye(generalized_template.shape[1])
+                
+                # Add regularization for numerical stability
+                segment_cov += 1e-6 * np.eye(segment_cov.shape[0])
+                
+                template_model['segments'].append({
+                    'mean': segment_mean,
+                    'covariance': segment_cov
+                })
+                template_model['segmented_means'].append(segment_mean)
+            
+            # Store final model
+            template_model['segmented_means'] = np.array(template_model['segmented_means'])
+            self.templates[vowel] = template_model
+            
+            print(f"  Created segmented template for vowel '{vowel}' with {len(template_model['segments'])} segments")
         
         print(f"\nTotal vowel templates created: {len(self.templates)}")
-        total_samples = sum(template['num_samples'] for template in self.templates.values())
-        print(f"Total training samples processed: {total_samples}")
     
-    def calculate_mahalanobis_distance(self, test_features, mean_template, covariance_matrix,regularization=1e-6):
-        """
-        Calculate Mahalanobis distance between test features and template
-        
-        Args:
-            test_features: Test feature matrix of shape (n_frames, n_features)
-            mean_template: Mean template
-            covariance_matrix: Covariance matrix of shape (n_features, n_features)
-        
-        Returns:
-            Mahalanobis distance (scalar)
-        """
-        # Flatten test features by taking mean across all frames
-        if len(test_features.shape) > 1:
-            test_vector = np.mean(test_features, axis=0)  # (39,)
-        else:
-            test_vector = test_features
-        
-        # Calculate difference
-        diff = test_vector - mean_template
-        cov = covariance_matrix.astype(float).copy()
-        cov += regularization * np.eye(cov.shape[0])
-
-        try:
-            # numerically stable solve: cov * x = diff -> x = inv(cov) * diff
-            sol = np.linalg.solve(cov, diff)
-            quad = np.dot(diff, sol)
-            if not np.isfinite(quad) or quad < 0:
-                return float('inf')
-            return float(np.sqrt(quad))
-        except np.linalg.LinAlgError:
-            # fallback to pseudo-inverse
-            pinv = np.linalg.pinv(cov)
-            quad = np.dot(diff, pinv.dot(diff))
-            if not np.isfinite(quad) or quad < 0:
-                return float('inf')
-            return float(np.sqrt(quad))
-        # # Formula: sqrt((x - mu)^T * Sigma^-1 * (x - mu))
-        # try:
-        #     inv_cov = np.linalg.inv(covariance_matrix)
-        #     mahalanobis_dist = np.sqrt(np.dot(np.dot(diff, inv_cov), diff))
-        #
-        #     # Handle potential NaN or inf values
-        #     if not np.isfinite(mahalanobis_dist):
-        #         mahalanobis_dist = float('inf')
-        #
-        # except np.linalg.LinAlgError:
-        #     # Fallback if matrix is singular
-        #     mahalanobis_dist = float('inf')
-        #
-        # return mahalanobis_dist
-    
-    def calculate_gaussian_likelihood(self, test_features, mean_template, covariance_matrix):
-        """
-        Calculate Gaussian likelihood for test features given template parameters
-        
-        Args:
-            test_features: Test feature matrix of shape (n_frames, n_features)
-            mean_template: Mean template
-            covariance_matrix: Covariance matrix of shape (n_features, n_features)
-        
-        Returns:
-            Log-likelihood (scalar, higher is better)
-        """
-        # Flatten test features by taking mean across all frames
-        if len(test_features.shape) > 1:
-            test_vector = np.mean(test_features, axis=0)  # (39,)
-        else:
-            test_vector = test_features
-        
-        # Calculate log-likelihood using scipy's multivariate_normal
-        try:
-            log_likelihood = multivariate_normal.logpdf(
-                test_vector, 
-                mean=mean_template, 
-                cov=covariance_matrix,
-                allow_singular=True
-            )
-            
-            # Handle potential NaN or inf values
-            if not np.isfinite(log_likelihood):
-                log_likelihood = -1e10
-                
-        except Exception as e:
-            # Fallback to large negative value if computation fails
-            print(f"Warning: Gaussian likelihood calculation failed: {e}")
-            log_likelihood = -1e10
-        
-        return log_likelihood
     
     def classify(self, test_features, distance_metric='euclidean'):
         """
-        Classify a test sample using specified distance metric
+        Classify a test sample using generalized segmented templates.
         
         Args:
-            test_features: MFCC features of test sample
+            test_features: MFCC features of test sample (n_frames, 39)
             distance_metric: Distance/score function to use. Options:
-                           - 'euclidean': Standard DTW with Euclidean distance
-                           - 'mahalanobis': Mahalanobis distance
-                           - 'gaussian': Gaussian log-likelihood (converted to distance)
+                           - 'euclidean': DTW against k-segment means 
+                           - 'mahalanobis': DTW on cost matrix using 
+                                            Mahalanobis distance 
+                           - 'gaussian': DTW on cost matrix using 
+                                         Gaussian log-likelihood 
             
         Returns:
             Tuple of (predicted_vowel, min_distance, distances_dict)
         """
         distances = {}
+        D = test_features.shape[1] # Dimensionality (39)
+        n_frames = test_features.shape[0]
         
-        for vowel, template_data in self.templates.items():
+        for vowel, template_model in self.templates.items():
+            k_segments = len(template_model['segments'])
+            if k_segments == 0:
+                distances[vowel] = float('inf')
+                continue
+            
             if distance_metric == 'euclidean':
-                # Standard DTW with Euclidean distance
-                vowel_distances = []
-                for features in template_data['raw_features']:
-                    alignment = dtw(test_features, features, dist_method='euclidean')
-                    vowel_distances.append(alignment.distance)
-                distances[vowel] = min(vowel_distances) if vowel_distances else float('inf')
-            
-            elif distance_metric == 'mahalanobis':
-                distance = self.calculate_mahalanobis_distance(test_features, template_data['mean'], template_data['covariance'])
-                distances[vowel] = distance
-            
-            elif distance_metric == 'gaussian':
-                log_likelihood = self.calculate_gaussian_likelihood(test_features, template_data['mean'], template_data['covariance'])
-                distances[vowel] = -log_likelihood  # Convert to distance (lower is better)
+                segmented_means = template_model['segmented_means'] # Shape (k, 39)
+                
+                try:
+                    alignment = dtw(test_features, segmented_means, dist_method='euclidean')
+                    distances[vowel] = alignment.distance
+                except Exception as e:
+                    print(f"Warning: DTW failed for {vowel} (euclidean): {e}")
+                    distances[vowel] = float('inf')
+
+            elif distance_metric == 'mahalanobis' or distance_metric == 'gaussian':
+                cost_matrix = np.zeros((n_frames, k_segments))
+                template_segments = template_model['segments']
+                
+                for i in range(n_frames):
+                    for j in range(k_segments):
+                        segment = template_segments[j]
+                        mean = segment['mean']
+                        cov = segment['covariance']
+                        
+                        diff = test_features[i] - mean
+                        
+                        try:
+                            # Calculate (x-m)^T * C^-1 * (x-m) 
+                            inv_cov = np.linalg.inv(cov)
+                            mahalanobis_sq = diff.dot(inv_cov).dot(diff)
+                            
+                            if not np.isfinite(mahalanobis_sq):
+                                mahalanobis_sq = 1e10 # Large cost
+                        
+                        except np.linalg.LinAlgError:
+                            # Fallback to pseudo-inverse if singular
+                            inv_cov = np.linalg.pinv(cov)
+                            mahalanobis_sq = diff.dot(inv_cov).dot(diff)
+                            if not np.isfinite(mahalanobis_sq):
+                                mahalanobis_sq = 1e10
+
+                        if distance_metric == 'mahalanobis':
+                            cost_matrix[i, j] = mahalanobis_sq
+                        
+                        # Gaussian (negative log likelihood)
+                        else:
+                            # Calculate -log(Gaussian) 
+                            # Term 1: 0.5 * log((2pi)^D * |C_j|)
+                            sign, logdet = np.linalg.slogdet(cov)
+                            if sign <= 0:
+                                log_const = 1e10
+                            else:
+                                log_const = 0.5 * (D * np.log(2 * np.pi) + logdet)
+                            
+                            if not np.isfinite(log_const): 
+                                log_const = 1e10
+
+                            # Full cost: 0.5*log_const + 0.5*mahalanobis_sq
+                            cost_matrix[i, j] = log_const + 0.5 * mahalanobis_sq
+                
+                # Run DTW on the pre-computed cost matrix
+                try:
+                    alignment = dtw(cost_matrix)
+                    distances[vowel] = alignment.distance
+                except Exception as e:
+                    print(f"Warning: DTW failed for {vowel} ({distance_metric}): {e}")
+                    distances[vowel] = float('inf')
             
             else:
-                raise ValueError(f"Unknown distance metric: {distance_metric}. Choose from: euclidean, mahalanobis, gaussian")
+                raise ValueError(f"Unknown distance metric: {distance_metric}. "
+                                 "Choose from: euclidean, mahalanobis, gaussian")
         
         # Find vowel with minimum distance
         if distances:
@@ -466,7 +431,7 @@ class DTWRecognizer:
         
         Args:
             unknown_threshold: Distance threshold for rejecting unknown samples
-                             If None, uses 1.5 * median of intra-class distances
+                             If None, a default large threshold is used.
             distance_metric: Distance metric to use for classification
         
         Returns:
@@ -477,29 +442,8 @@ class DTWRecognizer:
         print("="*60)
         print(f"Using distance metric: {distance_metric}")
         
-        # Calculate threshold if not provided
         if unknown_threshold is None:
-            all_template_distances = []
-            for vowel, template_data in self.templates.items():
-                raw_features = template_data['raw_features']
-                # Compare each template with other templates of same vowel
-                for i, feat1 in enumerate(raw_features):
-                    for j, feat2 in enumerate(raw_features):
-                        if i < j:  # Avoid duplicate comparisons
-                            if distance_metric == 'euclidean':
-                                alignment = dtw(feat1, feat2, dist_method='euclidean')
-                                all_template_distances.append(alignment.distance)
-                            elif distance_metric == 'mahalanobis':
-                                distance = self.calculate_mahalanobis_distance(feat1, template_data['mean'], template_data['covariance'])
-                                all_template_distances.append(distance)
-                            elif distance_metric == 'gaussian':
-                                log_likelihood = self.calculate_gaussian_likelihood(feat1, template_data['mean'], template_data['covariance'])
-                                all_template_distances.append(-log_likelihood)
-            
-            if all_template_distances:
-                unknown_threshold = 1.5 * np.median(all_template_distances)
-            else:
-                unknown_threshold = 1000.0  # Default large threshold
+            unknown_threshold = 1e10
         
         print(f"Unknown threshold: {unknown_threshold:.2f}\n")
         
@@ -593,7 +537,7 @@ class DTWRecognizer:
         print("="*60)
         
         # Load templates
-        self.load_templates()
+        # self.load_templates()
         
         if not self.templates:
             print("\nError: No templates loaded. Please add training audio files in data/train/ directory.")
@@ -612,6 +556,7 @@ class DTWRecognizer:
         print("\n" + "="*60)
         print("SUMMARY")
         print("="*60)
+        print(f"K-Segments:          {self.k_segments}")
         print(f"Distance Metric:     {distance_metric}")
         print(f"Closed-set Accuracy: {closed_set_results['accuracy']:.2f}%")
         print(f"Open-set Accuracy:   {open_set_results['accuracy']:.2f}%")
@@ -656,17 +601,30 @@ class DTWRecognizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
-        plt.show()
+        # plt.show()
     
-    def visualize_dtw_alignment(self, test_features, template_features, save_path=None):
+    def visualize_dtw_alignment(self, test_audio_file, vowel, save_path=None):
         """
-        Visualize DTW alignment path between test and template features
+        Visualize DTW alignment path between a test audio file and a 
+        segmented template model (Euclidean distance only).
         
         Args:
-            test_features: Test feature matrix
-            template_features: Template feature matrix
+            test_audio_file: Path to test audio file
+            vowel: The vowel template ('a', 'i', 'u', 'e', 'o') to align against
             save_path: Optional path to save the figure
         """
+        if vowel not in self.templates:
+            print(f"Error: No template found for vowel '{vowel}'")
+            return
+            
+        try:
+            test_features = self.extract_mfcc_features(test_audio_file)
+        except Exception as e:
+            print(f"Error loading test file: {e}")
+            return
+            
+        template_features = self.templates[vowel]['segmented_means']
+        
         # Compute DTW alignment
         alignment = dtw(test_features, template_features, dist_method='euclidean')
         
@@ -675,17 +633,20 @@ class DTWRecognizer:
         
         # Plot 1: Test features (first MFCC)
         ax1.plot(test_features[:, 0], 'b-', linewidth=2, label='Test Audio')
-        ax1.set_title('Test Audio Features (1st MFCC)', fontsize=12, fontweight='bold')
+        ax1.set_title(f'Test Audio Features (1st MFCC): {os.path.basename(test_audio_file)}', 
+                     fontsize=12, fontweight='bold')
         ax1.set_xlabel('Frame')
         ax1.set_ylabel('MFCC Value')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         
         # Plot 2: Template features (first MFCC)
-        ax2.plot(template_features[:, 0], 'r-', linewidth=2, label='Template Audio')
-        ax2.set_title('Template Audio Features (1st MFCC)', fontsize=12, fontweight='bold')
-        ax2.set_xlabel('Frame')
-        ax2.set_ylabel('MFCC Value')
+        ax2.plot(template_features[:, 0], 'r-o', linewidth=2, 
+                 label=f'Template "{vowel}" ({self.k_segments} segments)')
+        ax2.set_title(f'Segmented Template Features (1st MFCC)', 
+                     fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Segment Index')
+        ax2.set_ylabel('Mean MFCC Value')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         
@@ -695,7 +656,7 @@ class DTWRecognizer:
         ax3.set_title(f'DTW Alignment Path (Distance: {alignment.distance:.2f})', 
                      fontsize=12, fontweight='bold')
         ax3.set_xlabel('Test Audio Frame')
-        ax3.set_ylabel('Template Audio Frame')
+        ax3.set_ylabel(f'Template Segment Index (0-{self.k_segments-1})')
         ax3.grid(True, alpha=0.3)
         
         plt.tight_layout()
@@ -703,7 +664,7 @@ class DTWRecognizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
-        plt.show()
+        # plt.show()
     
     def visualize_mfcc_features(self, audio_file, save_path=None):
         """
@@ -714,11 +675,11 @@ class DTWRecognizer:
             save_path: Optional path to save the figure
         """
         # Load audio
-        signal, sr = librosa.load(audio_file, sr=16000)
+        signal, sr = librosa.load(audio_file, sr=self.sampling_rate)
         
         # Extract MFCC
         mfccs = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13)
-        
+
         # Create figure
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
         
@@ -743,14 +704,15 @@ class DTWRecognizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
-        plt.show()
+        # plt.show()
     
-    def visualize_distance_distribution(self, results, save_path=None):
+    def visualize_distance_distribution(self, results, title="Distance Distribution", save_path=None):
         """
         Visualize distance distribution for correct vs incorrect predictions
         
         Args:
             results: Dictionary containing evaluation results with 'results' key
+            title: Title for the plot
             save_path: Optional path to save the figure
         """
         # Extract distances and correctness
@@ -760,13 +722,16 @@ class DTWRecognizer:
         # Create figure
         plt.figure(figsize=(10, 6))
         
-        plt.hist(correct_distances, bins=30, alpha=0.7, label='Correct', color='green', edgecolor='black')
-        plt.hist(incorrect_distances, bins=30, alpha=0.7, label='Incorrect', color='red', edgecolor='black')
+        if correct_distances:
+            sns.histplot(correct_distances, bins=30, kde=True, 
+                         label='Correct', color='green')
+        if incorrect_distances:
+            sns.histplot(incorrect_distances, bins=30, kde=True, 
+                         label='Incorrect', color='red')
         
-        plt.xlabel('DTW Distance', fontsize=12)
+        plt.xlabel('DTW Distance / Cost', fontsize=12)
         plt.ylabel('Frequency', fontsize=12)
-        plt.title('Distance Distribution: Correct vs Incorrect Predictions', 
-                 fontsize=14, fontweight='bold')
+        plt.title(title, fontsize=14, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(True, alpha=0.3)
         
@@ -775,11 +740,12 @@ class DTWRecognizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
-        plt.show()
+        # plt.show()
     
     def visualize_template_features(self, save_path=None):
         """
-        Visualize mean template features for each vowel
+        Visualize the segmented mean template features (first 13 MFCCs)
+        for each vowel.
         
         Args:
             save_path: Optional path to save the figure
@@ -789,32 +755,49 @@ class DTWRecognizer:
             return
         
         # Create figure
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        axes = axes.flatten()
+        fig, axes = plt.subplots(len(self.vowels), 1, 
+                                 figsize=(12, 3 * len(self.vowels)),
+                                 sharex=True)
         
+        if len(self.vowels) == 1:
+            axes = [axes]
+
         for idx, vowel in enumerate(self.vowels):
             if vowel not in self.templates:
+                axes[idx].set_title(f'Vowel "{vowel}" - No Template')
+                axes[idx].axis('off')
                 continue
             
-            mean_features = self.templates[vowel]['mean']
+            # Get the (k, 39) matrix of mean vectors
+            mean_vectors = self.templates[vowel]['segmented_means']
             
-            # Plot MFCC coefficients
-            axes[idx].bar(range(len(mean_features)), mean_features, color='steelblue', edgecolor='black')
-            axes[idx].set_title(f'Vowel "{vowel}" - Mean Template', fontsize=11, fontweight='bold')
-            axes[idx].set_xlabel('Feature Index')
-            axes[idx].set_ylabel('Mean Value')
-            axes[idx].grid(True, alpha=0.3)
+            # Plot only the first 13 MFCC coefficients for clarity
+            mfcc_data = mean_vectors[:, :13]
+            
+            # Transpose for plotting (segments on x-axis)
+            im = axes[idx].imshow(mfcc_data.T, aspect='auto', 
+                                  origin='lower', cmap='viridis')
+            axes[idx].set_title(f'Vowel "{vowel}" - Segmented Mean Template (13 MFCCs)', 
+                               fontsize=11, fontweight='bold')
+            axes[idx].set_ylabel('MFCC Coefficient')
+            axes[idx].set_yticks(range(13))
+            axes[idx].set_yticklabels(range(13))
+
+        axes[-1].set_xlabel('Segment Index')
+        axes[-1].set_xticks(range(self.k_segments))
+        axes[-1].set_xticklabels(range(self.k_segments))
+
+        fig.colorbar(im, ax=axes, label='Mean Value', orientation='vertical', 
+                     fraction=0.05, pad=0.02)
         
-        # Remove extra subplot
-        axes[-1].axis('off')
-        
-        plt.suptitle('Mean Template Features for Each Vowel', fontsize=16, fontweight='bold')
+        plt.suptitle('Generalized Segmented Template Features', 
+                     fontsize=16, fontweight='bold', y=1.02)
         plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
-        plt.show()
+        # plt.show()
     
     def visualize_accuracy_comparison(self, closed_results, open_results, save_path=None):
         """
@@ -852,7 +835,7 @@ class DTWRecognizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
-        plt.show()
+        # plt.show()
     
     def visualize_open_set_threshold_analysis(self, results, save_path=None):
         """
@@ -879,14 +862,15 @@ class DTWRecognizer:
         colors = plt.cm.Set3(np.linspace(0, 1, len(distances_by_label)))
         
         for idx, (label, distances) in enumerate(distances_by_label.items()):
-            plt.hist(distances, bins=20, alpha=0.6, label=label, 
-                    color=colors[idx], edgecolor='black')
+            if distances:
+                sns.histplot(distances, bins=20, kde=True, 
+                             label=label, color=colors[idx])
         
-        # Draw threshold line
-        plt.axvline(x=threshold, color='red', linestyle='--', linewidth=2, 
-                   label=f'Threshold: {threshold:.2f}')
+        if threshold < 1e9:
+            plt.axvline(x=threshold, color='red', linestyle='--', linewidth=2, 
+                       label=f'Threshold: {threshold:.2f}')
         
-        plt.xlabel('DTW Distance', fontsize=12)
+        plt.xlabel('DTW Distance / Cost', fontsize=12)
         plt.ylabel('Frequency', fontsize=12)
         plt.title('Open-Set Recognition: Distance Distribution by Label', 
                  fontsize=14, fontweight='bold')
@@ -898,4 +882,4 @@ class DTWRecognizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
-        plt.show()
+        # plt.show()
