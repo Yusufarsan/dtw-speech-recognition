@@ -51,7 +51,7 @@ def run_single_classification():
         test_features = recognizer.extract_mfcc_features(test_file)
         
         # Try different distance metrics
-        for metric in ['euclidean', 'mahalanobis', 'gaussian', 'negative_gaussian']:
+        for metric in ['euclidean', 'mahalanobis', 'gaussian']:
             print(f"\nUsing {metric} distance:")
             try:
                 predicted, distance, all_distances = recognizer.classify(test_features, distance_metric=metric)
@@ -157,9 +157,9 @@ def run_visualization():
     
 
 def main():
-    run_basic_usage()
-    run_single_classification()
-    run_custom_evaluation()
+    # run_basic_usage()
+    # run_single_classification()
+    # run_custom_evaluation()
     run_visualization()
 
 if __name__ == '__main__':
