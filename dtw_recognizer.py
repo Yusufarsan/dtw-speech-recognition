@@ -77,6 +77,7 @@ class DTWRecognizer:
         """
         Extract 39D MFCC features (13 MFCC + Δ + ΔΔ) from audio file
         Supports multiple audio formats: WAV, MP3, FLAC, M4A, OGG
+        Trims silence from the start and end of the audio before feature extraction
         
         Args:
             audio_file: Path to audio file (various formats supported)
@@ -87,6 +88,10 @@ class DTWRecognizer:
         try:
             # Auto-resample to 16kHz for consistency
             signal, sample_rate = librosa.load(audio_file, sr=self.sampling_rate, mono=True)
+            
+            # Trim silence from the start and end of the audio
+            # top_db parameter controls the threshold (higher = more aggressive trimming)
+            signal, _ = librosa.effects.trim(signal, top_db=3)
             
             # Convert to int16 for compatibility with python-speech-features
             signal = (signal * 32767).astype(np.int16)
